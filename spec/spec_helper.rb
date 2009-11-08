@@ -24,6 +24,7 @@ DataMapper.setup(:default, {
   :adapter => 'simpledb',
   :access_key => access_key,
   :secret_key => secret_key,
-  :domain => 'missionaries',
-  :logger => log
+  :domain => 'dm_simpledb_adapter_test',
+  :logger => log,
+  :wait_for_consistency => true
 })

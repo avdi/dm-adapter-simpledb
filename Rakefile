@@ -54,7 +54,7 @@ def setup_dm(access_key, secret_key)
                      :adapter => 'simpledb',
                      :access_key => access_key,
                      :secret_key => secret_key,
-                     :domain => 'missionaries'
+                     :domain => 'dm_simpledb_adapter_test'
                    })
 end
 

@@ -28,20 +28,26 @@ module DataMapper
         @sdb_options[:domain] = options.fetch(:domain) { 
           options[:path].to_s.gsub(%r{(^/+)|(/+$)},"") # remove slashes
         }
+        @wait_for_consistency = 
+          normalised_options.fetch(:wait_for_consistency) { false }
       end
 
       def create(resources)
         created = 0
         time = Benchmark.realtime do
           resources.each do |resource|
-            initialize_serial(resource, UUIDTools::UUID.timestamp_create)
+            initialize_serial(resource, UUIDTools::UUID.timestamp_create.to_s)
             item_name = item_name_for_resource(resource)
             sdb_type = simpledb_type(resource.model)
             attributes = resource.attributes.merge(:simpledb_type => sdb_type)
             attributes = adjust_to_sdb_attributes(attributes)
             #attributes.reject!{|key,value| value.nil? || value == '' || value #== []}
             sdb.put_attributes(domain, item_name, attributes)
-            resource.id = item_name
+            if @wait_for_consistency
+              until consistent?(item_name)
+                sleep 0.1
+              end
+            end
             created += 1
           end
         end
@@ -65,30 +71,33 @@ module DataMapper
         
         conditions, order = set_conditions_and_sort_order(query, sdb_type)
         results = get_results(query, conditions, order)
-        results
-
-        results.map do |result|
-          data = query.fields.map do |property|
-            value = result.values[0][property.field.to_s]
-            if value != nil
-              
-              value = chunks_to_string(value) if property.type==String && value.size > 1
-              #replace the newline placeholder with newlines
-              if property.type==String
-                value = value.gsub(NEWLINE_REPLACE,"\n") if value.is_a?(String)
-                value[0] = value[0].gsub(NEWLINE_REPLACE,"\n") if value.is_a?(Array) && value[0]!=nil
+        proto_resources = results.map do |result|
+          name, attributes = *result.to_a.first
+          proto_resource = query.fields.inject({}) do |proto_resource, property|
+              value = attributes[property.field.to_s]
+              if value != nil
+                
+                value = chunks_to_string(value) if property.type==String && value.size > 1
+                #replace the newline placeholder with newlines
+                if property.type==String
+                  value = value.gsub(NEWLINE_REPLACE,"\n") if value.is_a?(String)
+                  value[0] = value[0].gsub(NEWLINE_REPLACE,"\n") if value.is_a?(Array) && value[0]!=nil
+                end
+                value = value.size > 1 ? value : value.first
+              #   if value.size > 1
+              #     value.map {|v| property.typecast(v) }
+              #   else
+              #     property.typecast(value[0])
+              #   end
+              # else
+              #   property.typecast(nil)
               end
-              if value.size > 1
-                value.map {|v| property.typecast(v) }
-              else
-                property.typecast(value[0])
-              end
-            else
-              property.typecast(nil)
-            end
+            proto_resource[property.name.to_s] = value
+            proto_resource
           end
-          data
+          proto_resource
         end
+        proto_resources
       end
       
       def update(attributes, query)
@@ -124,6 +133,10 @@ module DataMapper
       end
       
     private
+
+      def consistent?(item_name)
+        !sdb.get_attributes(@sdb_options[:domain], item_name)[:attributes].empty?
+      end
 
       #hack for converting and storing strings longer than 1024
       #one thing to note if you use string longer than 1019 chars you will loose the ability to do full text matching on queries
@@ -187,18 +200,23 @@ module DataMapper
           order = ""
         end
 
-        query.conditions.each do |operator, attribute, value|
-          operator = case operator.slug
+        query.conditions.each do |operation|
+          value = if operation.respond_to?(:operands) then 
+                    operation.operands.first
+                  else
+                    operation.value
+                  end
+          operator = case operation.slug
                      when :eql
                         if value.nil?
-                          conditions << "#{attribute.name} IS NULL"
+                          conditions << "#{operation.subject.name} IS NULL"
                           next
                         else
                           '='
                         end
                      when :not
                        if value.nil?
-                         conditions << "#{attribute.name} IS NOT NULL"
+                         conditions << "#{operation.subject.name} IS NOT NULL"
                          next
                        else
                          '!='
@@ -211,11 +229,11 @@ module DataMapper
                      when :in 
                        values = value.collect{|v| "'#{v}'"}.join(',')
                        values = "'__NULL__'" if values.empty?                       
-                       conditions << "#{attribute.name} IN (#{values})"
+                       conditions << "#{operation.subject.name} IN (#{values})"
                        next
-                     else raise "Invalid query operator: #{operator.inspect}" 
+                     else raise "Invalid query operation: #{operation.inspect}" 
                      end
-          conditions << "#{attribute.name} #{operator} '#{value}'"
+          conditions << "#{operation.subject.name} #{operator} '#{value}'"
         end
         [conditions,order]
       end
