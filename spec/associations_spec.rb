@@ -1,6 +1,5 @@
 require 'pathname'
 require Pathname(__FILE__).dirname.expand_path + 'spec_helper'
-require 'ruby-debug'
 
 describe 'associations' do
   it 'should work with belongs_to associations'

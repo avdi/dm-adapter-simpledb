@@ -2,7 +2,8 @@ require 'rubygems'
 require 'dm-core'
 require 'digest/sha1'
 require 'dm-aggregates'
-require 'right_aws' 
+require 'right_aws'
+require 'uuidtools'
 
 module DataMapper
   module Adapters
@@ -12,21 +13,35 @@ module DataMapper
       #This is a value that can be used to replace \n before storing a string and get it back coming out of SDB
       NEWLINE_REPLACE = "[[[NEWLINE]]]"
 
-      def initialize(name, opts = {})
-        super                                      
-        @opts = opts
+      def initialize(name, normalised_options)
+        super
+        @sdb_options = {}
+        @sdb_options[:access_key] = options.fetch(:access_key) { 
+          options[:user] 
+        }
+        @sdb_options[:secret_key] = options.fetch(:secret_key) { 
+          options[:password] 
+        }
+        @sdb_options[:logger] = options.fetch(:logger) { DataMapper.logger }
+        @sdb_options[:server] = options.fetch(:host) { 'sdb.amazonaws.com' }
+        @sdb_options[:port]   = options[:port] || 443 # port may be set but nil
+        @sdb_options[:domain] = options.fetch(:domain) { 
+          options[:path].to_s.gsub(%r{(^/+)|(/+$)},"") # remove slashes
+        }
       end
 
       def create(resources)
         created = 0
         time = Benchmark.realtime do
           resources.each do |resource|
+            initialize_serial(resource, UUIDTools::UUID.timestamp_create)
             item_name = item_name_for_resource(resource)
             sdb_type = simpledb_type(resource.model)
             attributes = resource.attributes.merge(:simpledb_type => sdb_type)
             attributes = adjust_to_sdb_attributes(attributes)
-            #attributes.reject!{|key,value| value.nil? || value == '' || value == []}
+            #attributes.reject!{|key,value| value.nil? || value == '' || value #== []}
             sdb.put_attributes(domain, item_name, attributes)
+            resource.id = item_name
             created += 1
           end
         end
@@ -45,45 +60,37 @@ module DataMapper
         deleted
       end
 
-      def read_many(query)
+      def read(query)
         sdb_type = simpledb_type(query.model)
         
         conditions, order = set_conditions_and_sort_order(query, sdb_type)
         results = get_results(query, conditions, order)
+        results
 
-        Collection.new(query) do |collection|
-          results.each do |result|
-            data = query.fields.map do |property|
-              value = result.values[0][property.field.to_s]
-              if value != nil
-     
-                value = chunks_to_string(value) if property.type==String && value.size > 1
-                #replace the newline placeholder with newlines
-                if property.type==String
-                  value = value.gsub(NEWLINE_REPLACE,"\n") if value.is_a?(String)
-                  value[0] = value[0].gsub(NEWLINE_REPLACE,"\n") if value.is_a?(Array) && value[0]!=nil
-                end
-                if value.size > 1
-                  value.map {|v| property.typecast(v) }
-                else
-                  property.typecast(value[0])
-                end
-              else
-                 property.typecast(nil)
+        results.map do |result|
+          data = query.fields.map do |property|
+            value = result.values[0][property.field.to_s]
+            if value != nil
+              
+              value = chunks_to_string(value) if property.type==String && value.size > 1
+              #replace the newline placeholder with newlines
+              if property.type==String
+                value = value.gsub(NEWLINE_REPLACE,"\n") if value.is_a?(String)
+                value[0] = value[0].gsub(NEWLINE_REPLACE,"\n") if value.is_a?(Array) && value[0]!=nil
               end
+              if value.size > 1
+                value.map {|v| property.typecast(v) }
+              else
+                property.typecast(value[0])
+              end
+            else
+              property.typecast(nil)
             end
-            collection.load(data)
           end
+          data
         end
       end
       
-      def read_one(query)
-        #already has limit defined as 1 return first/only result from collection
-        results = read_many(query)
-        results.inspect #force the lazy loading to actually load
-        results[0]
-      end
- 
       def update(attributes, query)
         updated = 0
         time = Benchmark.realtime do
@@ -162,7 +169,7 @@ module DataMapper
 
       # Returns the domain for the model
       def domain
-        @uri[:domain]
+        @sdb_options[:domain]
       end
 
       #sets the conditions and order for the SDB query
@@ -174,14 +181,14 @@ module DataMapper
         if query.order && query.order.length > 0
           query_object = query.order[0]
           #anything sorted on must be a condition for SDB
-          conditions << "#{query_object.property.name} IS NOT NULL" 
-          order = "ORDER BY #{query_object.property.name} #{query_object.direction}"
+          conditions << "#{query_object.target.name} IS NOT NULL" 
+          order = "ORDER BY #{query_object.target.name} #{query_object.operator}"
         else
           order = ""
         end
 
         query.conditions.each do |operator, attribute, value|
-          operator = case operator
+          operator = case operator.slug
                      when :eql
                         if value.nil?
                           conditions << "#{attribute.name} IS NULL"
@@ -263,7 +270,7 @@ module DataMapper
         item_name = "#{sdb_type}+"
         keys = keys_for_model(resource.model)
         item_name += keys.map do |property|
-          resource.instance_variable_get(property.instance_variable_name)
+          property.get(resource)
         end.join('-')
         
         Digest::SHA1.hexdigest(item_name)
@@ -283,9 +290,9 @@ module DataMapper
       
       # Returns an SimpleDB instance to work with
       def sdb
-        access_key = @uri[:access_key]
-        secret_key = @uri[:secret_key]
-        @sdb ||= RightAws::SdbInterface.new(access_key,secret_key,@opts)
+        access_key = @sdb_options[:access_key]
+        secret_key = @sdb_options[:secret_key]
+        @sdb ||= RightAws::SdbInterface.new(access_key,secret_key,@sdb_options)
         @sdb
       end
       
@@ -309,7 +316,7 @@ module DataMapper
         end
         
         def create_model_storage(repository, model)
-          sdb.create_domain(@uri[:domain])
+          sdb.create_domain(@sdb_options[:domain])
         end
         
         #On SimpleDB you probably don't want to destroy the whole domain
@@ -318,7 +325,7 @@ module DataMapper
         #rake db:automigrate destroy=true
         def destroy_model_storage(repository, model)
           if ENV['destroy']!=nil && ENV['destroy']=='true'
-            sdb.delete_domain(@uri[:domain])
+            sdb.delete_domain(@sdb_options[:domain])
           end
         end
         
