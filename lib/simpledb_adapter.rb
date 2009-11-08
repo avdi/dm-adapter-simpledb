@@ -36,7 +36,8 @@ module DataMapper
         created = 0
         time = Benchmark.realtime do
           resources.each do |resource|
-            initialize_serial(resource, UUIDTools::UUID.timestamp_create.to_s)
+            uuid = UUIDTools::UUID.timestamp_create
+            initialize_serial(resource, uuid.to_i)
             item_name = item_name_for_resource(resource)
             sdb_type = simpledb_type(resource.model)
             attributes = resource.attributes.merge(:simpledb_type => sdb_type)
@@ -83,14 +84,13 @@ module DataMapper
                   value = value.gsub(NEWLINE_REPLACE,"\n") if value.is_a?(String)
                   value[0] = value[0].gsub(NEWLINE_REPLACE,"\n") if value.is_a?(Array) && value[0]!=nil
                 end
-                value = value.size > 1 ? value : value.first
-              #   if value.size > 1
-              #     value.map {|v| property.typecast(v) }
-              #   else
-              #     property.typecast(value[0])
-              #   end
-              # else
-              #   property.typecast(nil)
+                if value.size > 1
+                  value = value.map {|v| property.typecast(v) }
+                else
+                  value = property.typecast(value[0])
+                end
+              else
+                value = property.typecast(nil)
               end
             proto_resource[property.name.to_s] = value
             proto_resource
@@ -100,14 +100,16 @@ module DataMapper
         proto_resources
       end
       
-      def update(attributes, query)
+      def update(attributes, collection)
         updated = 0
         time = Benchmark.realtime do
-          item_name = item_name_for_query(query)
           attributes = attributes.to_a.map {|a| [a.first.name.to_s, a.last]}.to_hash
           attributes = adjust_to_sdb_attributes(attributes)
-          sdb.put_attributes(domain, item_name, attributes, true)
-          updated += 1
+          collection.each do |resource|
+            item_name = item_name_for_resource(resource)
+            sdb.put_attributes(domain, item_name, attributes, true)
+            updated += 1
+          end
           raise NotImplementedError.new('Only :eql on delete at the moment') if not_eql_query?(query)
         end
         DataMapper.logger.debug(format_log_entry("UPDATE #{query.conditions.inspect} (#{updated} times)", time))
@@ -200,40 +202,33 @@ module DataMapper
           order = ""
         end
 
-        query.conditions.each do |operation|
-          value = if operation.respond_to?(:operands) then 
-                    operation.operands.first
-                  else
-                    operation.value
-                  end
-          operator = case operation.slug
-                     when :eql
-                        if value.nil?
-                          conditions << "#{operation.subject.name} IS NULL"
-                          next
+        query.conditions.each do |op|
+          condition = case op.slug
+                      when :eql
+                        if op.value.nil?
+                          "#{op.subject.name} IS NULL"
                         else
-                          '='
+                          "#{op.subject.name} == '#{value}'"
                         end
-                     when :not
-                       if value.nil?
-                         conditions << "#{operation.subject.name} IS NOT NULL"
-                         next
-                       else
-                         '!='
-                       end
-                     when :gt then '>'
-                     when :gte then '>='
-                     when :lt then '<'
-                     when :lte then '<='
-                     when :like then 'like'
-                     when :in 
-                       values = value.collect{|v| "'#{v}'"}.join(',')
-                       values = "'__NULL__'" if values.empty?                       
-                       conditions << "#{operation.subject.name} IN (#{values})"
-                       next
-                     else raise "Invalid query operation: #{operation.inspect}" 
-                     end
-          conditions << "#{operation.subject.name} #{operator} '#{value}'"
+                      when :not
+                        comp = op.operands.first
+                        if comp.value.nil?
+                          "#{comp.subject.name} IS NOT NULL"
+                        else
+                          "#{comp.subject.name} != '#{comp.value}'"
+                        end
+                      when :gt then "#{op.subject.name} > '#{op.value}'"
+                      when :gte then "#{op.subject.name} >= '#{op.value}'"
+                      when :lt then "#{op.subject.name} < '#{op.value}'"
+                      when :lte then "#{op.subject.name} <= '#{op.value}'"
+                      when :like then "#{op.subject.name} like '#{op.value}'"
+                      when :in 
+                        values = op.value.collect{|v| "'#{v}'"}.join(',')
+                        values = "'__NULL__'" if values.empty?                       
+                        "#{op.subject.name} IN (#{values})"
+                      else raise "Invalid query op: #{op.inspect}" 
+                      end
+          conditions << condition
         end
         [conditions,order]
       end
