@@ -56,22 +56,26 @@ module DataMapper
         created
       end
       
-      def delete(query)
+      def delete(collection)
         deleted = 0
         time = Benchmark.realtime do
-          item_name = item_name_for_query(query)
-          sdb.delete_attributes(domain, item_name)
-          deleted += 1
-          raise NotImplementedError.new('Only :eql on delete at the moment') if not_eql_query?(query)
-        end; DataMapper.logger.debug(format_log_entry("(#{deleted}) DELETE #{query.conditions.inspect}", time))
+          collection.each do |resource|
+            item_name = item_name_for_resource(resource)
+            sdb.delete_attributes(domain, item_name)
+            deleted += 1
+          end
+          raise NotImplementedError.new('Only :eql on delete at the moment') if not_eql_query?(collection.query)
+        end; DataMapper.logger.debug(format_log_entry("(#{deleted}) DELETE #{collection.query.conditions.inspect}", time))
         deleted
       end
 
       def read(query)
         sdb_type = simpledb_type(query.model)
         
-        conditions, order = set_conditions_and_sort_order(query, sdb_type)
+        conditions, order, unsupported_conditions = 
+          set_conditions_and_sort_order(query, sdb_type)
         results = get_results(query, conditions, order)
+        #results = query.match_records(results)
         proto_resources = results.map do |result|
           name, attributes = *result.to_a.first
           proto_resource = query.fields.inject({}) do |proto_resource, property|
@@ -110,9 +114,9 @@ module DataMapper
             sdb.put_attributes(domain, item_name, attributes, true)
             updated += 1
           end
-          raise NotImplementedError.new('Only :eql on delete at the moment') if not_eql_query?(query)
+          raise NotImplementedError.new('Only :eql on delete at the moment') if not_eql_query?(collection.query)
         end
-        DataMapper.logger.debug(format_log_entry("UPDATE #{query.conditions.inspect} (#{updated} times)", time))
+        DataMapper.logger.debug(format_log_entry("UPDATE #{collection.query.conditions.inspect} (#{updated} times)", time))
         updated
       end
       
@@ -123,7 +127,7 @@ module DataMapper
       def aggregate(query)
         raise ArgumentError.new("Only count is supported") unless (query.fields.first.operator == :count)
         sdb_type = simpledb_type(query.model)
-        conditions, order = set_conditions_and_sort_order(query, sdb_type)
+        conditions, order, unsupported_conditions = set_conditions_and_sort_order(query, sdb_type)
 
         query_call = "SELECT count(*) FROM #{domain} "
         query_call << "WHERE #{conditions.compact.join(' AND ')}" if conditions.length > 0
@@ -189,6 +193,7 @@ module DataMapper
 
       #sets the conditions and order for the SDB query
       def set_conditions_and_sort_order(query, sdb_type)
+        unsupported_conditions = []
         conditions = ["simpledb_type = '#{sdb_type}'"]
         # look for query.order.first and insure in conditions
         # raise if order if greater than 1
@@ -201,36 +206,54 @@ module DataMapper
         else
           order = ""
         end
-
         query.conditions.each do |op|
-          condition = case op.slug
-                      when :eql
-                        if op.value.nil?
-                          "#{op.subject.name} IS NULL"
-                        else
-                          "#{op.subject.name} == '#{value}'"
-                        end
-                      when :not
-                        comp = op.operands.first
-                        if comp.value.nil?
-                          "#{comp.subject.name} IS NOT NULL"
-                        else
-                          "#{comp.subject.name} != '#{comp.value}'"
-                        end
-                      when :gt then "#{op.subject.name} > '#{op.value}'"
-                      when :gte then "#{op.subject.name} >= '#{op.value}'"
-                      when :lt then "#{op.subject.name} < '#{op.value}'"
-                      when :lte then "#{op.subject.name} <= '#{op.value}'"
-                      when :like then "#{op.subject.name} like '#{op.value}'"
-                      when :in 
-                        values = op.value.collect{|v| "'#{v}'"}.join(',')
-                        values = "'__NULL__'" if values.empty?                       
-                        "#{op.subject.name} IN (#{values})"
-                      else raise "Invalid query op: #{op.inspect}" 
-                      end
-          conditions << condition
+          case op.slug
+          when :regexp
+            unsupported_conditions << op
+          when :eql
+            conditions << if op.value.nil?
+              "#{op.subject.name} IS NULL"
+            else
+              "#{op.subject.name} = '#{op.value}'"
+            end
+          when :not then
+            comp = op.operands.first
+            if comp.slug == :like
+              conditions << "#{comp.subject.name} not like '#{comp.value}'"
+              next
+            end
+            case comp.value
+            when Range, Set, Array, Regexp
+              unsupported_conditions << op
+            when nil
+              conditions << "#{comp.subject.name} IS NOT NULL"
+            else
+              conditions << "#{comp.subject.name} != '#{comp.value}'"
+            end
+          when :gt then conditions << "#{op.subject.name} > '#{op.value}'"
+          when :gte then conditions << "#{op.subject.name} >= '#{op.value}'"
+          when :lt then conditions << "#{op.subject.name} < '#{op.value}'"
+          when :lte then conditions << "#{op.subject.name} <= '#{op.value}'"
+          when :like then conditions << "#{op.subject.name} like '#{op.value}'"
+          when :in
+            case op.value
+            when Array, Set
+              values = op.value.collect{|v| "'#{v}'"}.join(',')
+              values = "'__NULL__'" if values.empty?                       
+              conditions << "#{op.subject.name} IN (#{values})"
+            when Range
+              if op.value.exclude_end?
+                unsupported_conditions << op
+              else
+                conditions << "#{op.subject.name} between '#{op.value.first}' and '#{op.value.last}'"
+              end
+            else
+              raise ArgumentError, "Unsupported inclusion op: #{op.value.inspect}"
+            end
+          else raise "Invalid query op: #{op.inspect}"
+          end
         end
-        [conditions,order]
+        [conditions,order,unsupported_conditions]
       end
       
       def select(query_call, query_limit)
@@ -296,7 +319,7 @@ module DataMapper
       
       def not_eql_query?(query)
         # Curosity check to make sure we are only dealing with a delete
-        conditions = query.conditions.map {|c| c[0] }.uniq
+        conditions = query.conditions.map {|c| c.slug }.uniq
         selectors = [ :gt, :gte, :lt, :lte, :not, :like, :in ]
         return (selectors - conditions).size != selectors.size
       end
