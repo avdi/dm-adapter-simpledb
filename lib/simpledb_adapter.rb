@@ -101,7 +101,7 @@ module DataMapper
           end
           proto_resource
         end
-        proto_resources
+        query.filter_records(proto_resources)
       end
       
       def update(attributes, collection)
@@ -283,7 +283,7 @@ module DataMapper
           query_limit = 999999999 #TODO hack for query.limit being nil
           #query_call << " limit 2500" #this doesn't work with continuation keys as it halts at the limit passed not just a limit per query.
         end
-        select(query_call, query_limit)
+        records = select(query_call, query_limit)
       end
       
       # Creates an item name for a query
