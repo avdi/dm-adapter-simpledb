@@ -10,6 +10,8 @@ module DataMapper
   module Adapters
     class SimpleDBAdapter < AbstractAdapter
 
+      attr_reader :sdb_options
+
       #right_aws calls Array(your_string) on all string properties, which splits on \n and then sorts your string in a random order
       #This is a value that can be used to replace \n before storing a string and get it back coming out of SDB
       NEWLINE_REPLACE = "[[[NEWLINE]]]"

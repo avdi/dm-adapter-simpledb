@@ -1,7 +1,11 @@
+require 'dm-types'
+
 module DataMapper
   module Types
     class SdbArray < DataMapper::Type
-      primitive Text
+      primitive String
+      length    65535
+      lazy      true
 
       def self.load(value, property)
         value

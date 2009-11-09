@@ -131,7 +131,7 @@ EOF
 
     describe '#query' do
       before(:each) do
-        @domain = Friend.repository(:default).adapter.uri[:domain]
+        @domain = Friend.repository(:default).adapter.sdb_options[:domain]
       end
       it "should return an array of records" do
         records = Friend.repository(:default).adapter.query("SELECT age, wealth from #{@domain} where age = '25'")

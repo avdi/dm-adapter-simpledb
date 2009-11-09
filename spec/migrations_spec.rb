@@ -34,7 +34,7 @@ describe 'support migrations' do
 #  end
   
   it "should create model storage" do
-    Person.auto_migrate!
+    DataMapper.auto_migrate!
     @adapter.storage_exists?("dm_simpledb_adapter_test").should == true
   end
   
