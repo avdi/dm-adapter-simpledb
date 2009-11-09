@@ -4,6 +4,7 @@ require 'digest/sha1'
 require 'dm-aggregates'
 require 'right_aws'
 require 'uuidtools'
+require File.expand_path('simpledb_adapter/sdb_array', File.dirname(__FILE__))
 
 module DataMapper
   module Adapters
@@ -272,7 +273,8 @@ module DataMapper
       
       #gets all results or proper number of results depending on the :limit
       def get_results(query, conditions, order)
-        query_call = "SELECT * FROM #{domain} "
+        output_list = query.fields.map{|f| f.field}.join(', ')
+        query_call = "SELECT #{output_list} FROM #{domain} "
         query_call << "WHERE #{conditions.compact.join(' AND ')}" if conditions.length > 0
         query_call << " #{order}"
         if query.limit!=nil
