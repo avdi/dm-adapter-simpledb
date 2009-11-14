@@ -18,6 +18,7 @@ module DataMapper
       def self.typecast(value, property)
         value
       end
+
     end 
   end
 end

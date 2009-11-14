@@ -1,6 +1,6 @@
 require 'pathname'
 require Pathname(__FILE__).dirname.expand_path + 'spec_helper'
-require 'ruby-debug'
+require 'dm-migrations'
 
 describe 'support migrations' do
   
@@ -15,13 +15,8 @@ describe 'support migrations' do
     property :birthday,   Date
     property :created_at, DateTime
     
-    belongs_to :company
   end
 
-  before do
-    @adapter = repository(:default).adapter
-  end
- 
 #  test can't be run simultanious make it delete a throwawaable storage model
 #  instead of the one used by all the tests 
 #  it "should destroy model storage" do
@@ -34,8 +29,11 @@ describe 'support migrations' do
 #  end
   
   it "should create model storage" do
-    DataMapper.auto_migrate!
-    @adapter.storage_exists?("dm_simpledb_adapter_test").should == true
+    pending "figure out where auto migrations went in 0.10"
+    DataMapper.repository(:migration) do
+      DataMapper.auto_migrate!
+      @migration_adapter.storage_exists?(@domain).should == true
+    end
   end
   
 end

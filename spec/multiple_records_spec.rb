@@ -30,14 +30,13 @@ describe 'with multiple records saved' do
     @jeremy   = Person.create(@person_attrs.merge(:id => Time.now.to_f.to_s, :name => "Jeremy Boles", :age => 25))
     @danielle = Person.create(@person_attrs.merge(:id => Time.now.to_f.to_s, :name => "Danille Boles", :age => 26))
     @keegan   = Person.create(@person_attrs.merge(:id => Time.now.to_f.to_s, :name => "Keegan Jones", :age => 20))
-    sleep(0.4) #or the get calls might not have these created yet
+    @adapter.wait_for_consistency
   end
   
   after(:each) do
     @jeremy.destroy
     @danielle.destroy
     @keegan.destroy
-    sleep(0.4) #or might not be destroyed by the next test
   end
   
   it 'should get all records' do
@@ -56,7 +55,7 @@ describe 'with multiple records saved' do
   
   it 'should get records by not matcher' do
     people = Person.all(:age.not => 25)
-    people.length.should == 2
+    people.should have(2).entries
   end
 
   it 'should get record by not matcher' do
@@ -100,13 +99,13 @@ describe 'with multiple records saved' do
   end
   
   it 'should get records by the IN matcher' do
-    people = Person.all(:id.in => [@jeremy.id, @danielle.id])
+    people = Person.all(:id => [@jeremy.id, @danielle.id])
     people.should include(@jeremy)
     people.should include(@danielle)
     people.should_not include(@keegan)
   end
   it "should get no records if IN array is empty" do
-    people = Person.all(:id.in => [])
+    people = Person.all(:id => [])
     people.should be_empty
   end
 end

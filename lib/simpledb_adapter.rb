@@ -12,6 +12,10 @@ module DataMapper
 
       attr_reader :sdb_options
 
+      # For testing purposes ONLY. Seriously, don't enable this for production
+      # code.
+      attr_accessor :consistency_policy
+
       #right_aws calls Array(your_string) on all string properties, which splits on \n and then sorts your string in a random order
       #This is a value that can be used to replace \n before storing a string and get it back coming out of SDB
       NEWLINE_REPLACE = "[[[NEWLINE]]]"
@@ -31,7 +35,7 @@ module DataMapper
         @sdb_options[:domain] = options.fetch(:domain) { 
           options[:path].to_s.gsub(%r{(^/+)|(/+$)},"") # remove slashes
         }
-        @wait_for_consistency = 
+        @consistency_policy = 
           normalised_options.fetch(:wait_for_consistency) { false }
       end
 
@@ -45,17 +49,13 @@ module DataMapper
             sdb_type = simpledb_type(resource.model)
             attributes = resource.attributes.merge(:simpledb_type => sdb_type)
             attributes = adjust_to_sdb_attributes(attributes)
-            #attributes.reject!{|key,value| value.nil? || value == '' || value #== []}
+            attributes.reject!{|name, value| value.nil?}
             sdb.put_attributes(domain, item_name, attributes)
-            if @wait_for_consistency
-              until consistent?(item_name)
-                sleep 0.1
-              end
-            end
             created += 1
           end
         end
         DataMapper.logger.debug(format_log_entry("(#{created}) INSERT #{resources.inspect}", time))
+        modified!
         created
       end
       
@@ -69,10 +69,12 @@ module DataMapper
           end
           raise NotImplementedError.new('Only :eql on delete at the moment') if not_eql_query?(collection.query)
         end; DataMapper.logger.debug(format_log_entry("(#{deleted}) DELETE #{collection.query.conditions.inspect}", time))
+        modified!
         deleted
       end
 
       def read(query)
+        maybe_wait_for_consistency
         sdb_type = simpledb_type(query.model)
         
         conditions, order, unsupported_conditions = 
@@ -104,22 +106,30 @@ module DataMapper
           end
           proto_resource
         end
+        query.conditions.operands.reject!{ |op|
+          !unsupported_conditions.include?(op)
+        }
         query.filter_records(proto_resources)
       end
       
       def update(attributes, collection)
         updated = 0
+        attrs_to_update, attrs_to_delete = prepare_attributes(attributes)
         time = Benchmark.realtime do
-          attributes = attributes.to_a.map {|a| [a.first.name.to_s, a.last]}.to_hash
-          attributes = adjust_to_sdb_attributes(attributes)
           collection.each do |resource|
             item_name = item_name_for_resource(resource)
-            sdb.put_attributes(domain, item_name, attributes, true)
+            unless attrs_to_update.empty?
+              sdb.put_attributes(domain, item_name, attrs_to_update, true)
+            end
+            unless attrs_to_delete.empty?
+              sdb.delete_attributes(comain, item_name, attrs_to_delete)
+            end
             updated += 1
           end
           raise NotImplementedError.new('Only :eql on delete at the moment') if not_eql_query?(collection.query)
         end
         DataMapper.logger.debug(format_log_entry("UPDATE #{collection.query.conditions.inspect} (#{updated} times)", time))
+        modified!
         updated
       end
       
@@ -140,12 +150,18 @@ module DataMapper
         end; DataMapper.logger.debug(format_log_entry(query_call, time))
         [results[:items][0].values.first["Count"].first.to_i]
       end
-      
-    private
 
-      def consistent?(item_name)
-        !sdb.get_attributes(@sdb_options[:domain], item_name)[:attributes].empty?
+      # For testing purposes only.
+      def wait_for_consistency
+        return unless @current_consistency_token
+        token = :none
+        begin
+          results = sdb.get_attributes(domain, '__dm_consistency_token', '__dm_consistency_token')
+          tokens  = results[:attributes]['__dm_consistency_token']
+        end until tokens.include?(@current_consistency_token)
       end
+
+    private
 
       #hack for converting and storing strings longer than 1024
       #one thing to note if you use string longer than 1019 chars you will loose the ability to do full text matching on queries
@@ -343,6 +359,59 @@ module DataMapper
 
       def format_log_entry(query, ms = 0)
         'SDB (%.1fs)  %s' % [ms, query.squeeze(' ')]
+      end
+
+      def prepare_attributes(attributes)
+        attributes = attributes.to_a.map {|a| [a.first.name.to_s, a.last]}.to_hash
+        attributes = adjust_to_sdb_attributes(attributes)
+        updates, deletes = attributes.partition{|name,value|
+          !value.nil?
+        }
+        attrs_to_update = Hash[updates]
+        attrs_to_delete = Hash[deletes].keys
+        [attrs_to_update, attrs_to_delete]
+      end
+
+      def update_consistency_token
+        @current_consistency_token = UUIDTools::UUID.timestamp_create.to_s
+        sdb.put_attributes(
+          domain, 
+          '__dm_consistency_token', 
+          {'__dm_consistency_token' => [@current_consistency_token]})
+      end
+
+      def maybe_wait_for_consistency
+        if consistency_policy == :automatic && @current_consistency_token
+          wait_for_consistency
+        end
+      end
+
+      # SimpleDB supports "eventual consistency", which mean your data will be
+      # there... eventually. Obviously this can make tests a little flaky. One
+      # option is to just wait a fixed amount of time after every write, but
+      # this can quickly add up to a lot of waiting. The strategy implemented
+      # here is based on the theory that while consistency is only eventual,
+      # chances are writes will at least be linear. That is, once the results of
+      # write #2 show up we can probably assume that the results of write #1 are
+      # in as well.
+      #
+      # When a consistency policy is enabled, the adapter writes a new unique
+      # "consistency token" to the database after every write (i.e. every
+      # create, update, or delete). If the policy is :manual, it only writes the
+      # consistency token. If the policy is :automatic, writes will not return
+      # until the token has been successfully read back.
+      #
+      # When waiting for the consistency token to show up, we use progressively
+      # longer timeouts until finally giving up and raising an exception.
+      def modified!
+        case @consistency_policy
+        when :manual, :automatic then
+          update_consistency_token
+        when false then
+          # do nothing
+        else
+          raise "Invalid :wait_for_consistency option: #{@consistency_policy.inspect}"
+        end
       end
 
       #integrated from http://github.com/edward/dm-simpledb/tree/master

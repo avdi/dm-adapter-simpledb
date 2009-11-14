@@ -48,7 +48,7 @@ describe 'with multiple records saved' do
   end
   
   it 'should find all records with diving hobby' do
-    people = Hobbyist.all(:hobbies => 'diving')
+    people = Hobbyist.all(:hobbies => 'diving', :fields => [:name, :hobbies])
     people.should     include(@jeremy)
     people.should     include(@danielle)
     people.should_not include(@keegan)

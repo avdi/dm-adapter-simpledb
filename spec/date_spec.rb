@@ -15,26 +15,25 @@ end
 
 describe 'with multiple records saved' do
   before(:each) do
+    @adapter.wait_for_consistency
     @person_attrs = { :id => "person-#{Time.now.to_f.to_s}", :name => 'Jeremy Boles', :age  => 25, :wealth => 25.00, :birthday => Date.today }
     @jeremy   = Professor.create(@person_attrs.merge(:id => Time.now.to_f.to_s, :name => "Jeremy Boles", :age => 25))
     @danielle = Professor.create(@person_attrs.merge(:id => Time.now.to_f.to_s, :name => "Danille Boles", :age => 26))
     @keegan   = Professor.create(@person_attrs.merge(:id => Time.now.to_f.to_s, :name => "Keegan Jones", :age => 20))
-    sleep(0.4) #or the get calls might not have these created yet
+    @adapter.wait_for_consistency
   end
   
   after(:each) do
     @jeremy.destroy
     @danielle.destroy
     @keegan.destroy
-    sleep(0.4) #or might not be destroyed by the next test
   end
   
   it 'should handle DateTime' do
-    pending 'Need to figure out how to coerce DateTime'
-    time = Time.now
+    time = DateTime.civil(1970,1,1)
     @jeremy.created_at = time
     @jeremy.save
-    sleep(0.2)
+    @adapter.wait_for_consistency
     person = Professor.get!(@jeremy.id, @jeremy.name)
     person.created_at.should == time
   end

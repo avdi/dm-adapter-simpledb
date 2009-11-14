@@ -11,7 +11,6 @@ class Hero
   property :birthday,   Date
   property :created_at, DateTime
   
-  belongs_to :company
 end
 
 describe 'with multiple records saved' do
@@ -20,14 +19,13 @@ describe 'with multiple records saved' do
     @jeremy   = Hero.create(@person_attrs.merge(:id => Time.now.to_f.to_s, :name => "Jeremy Boles", :age => 25))
     @danielle = Hero.create(@person_attrs.merge(:id => Time.now.to_f.to_s, :name => "Danille Boles", :age => 26))
     @keegan   = Hero.create(@person_attrs.merge(:id => Time.now.to_f.to_s, :name => "Keegan Jones", :age => 20, :wealth => 15.00))
-    sleep(0.4) #or the get calls might not have these created yet
+    @adapter.wait_for_consistency
   end
   
   after(:each) do
     @jeremy.destroy
     @danielle.destroy
     @keegan.destroy
-    sleep(0.4) #or might not be destroyed by the next test
   end
   
   it 'should handle limit one case' do
@@ -44,12 +42,6 @@ describe 'with multiple records saved' do
     persons = Hero.all(:limit => 150)
     persons.length.should ==3
   end
-
-  #it would be really slow to create over 100 entires to test this until we have batch creation
-  it 'should handle limits over the default SDB 100 results limit'
-
-  #it would be really slow to create over 100 entires to test this until we have batch creation
-  it 'should get all results over the default SDB 100 results limit'
 
   it 'should handle ordering asc results with a limit' do
     persons = Hero.all(:order => [:age.asc], :limit => 2)
@@ -97,6 +89,22 @@ describe 'with multiple records saved' do
     persons.length.should ==2
     persons[0].should == @danielle
     persons[1].should == @jeremy
+  end
+
+  context "with many entries" do
+    before :each do
+      resources = []
+      111.times do |i|
+        resources << Hero.new(:id => i, :name => "Hero#{i}")
+      end
+      DataMapper.repository(:default).create(resources)
+      @adapter.wait_for_consistency
+    end
+
+    it "should support limits over 100" do
+      results = Hero.all(:limit => 110)
+      results.should have(110).entries
+    end
   end
 
 end
