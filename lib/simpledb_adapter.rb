@@ -6,8 +6,9 @@ require 'dm-aggregates'
 require 'right_aws'
 require 'uuidtools'
 
-require 'simpledb_adapter/sdb_array'
+require 'simpledb/sdb_array'
 require 'simpledb/utils'
+require 'simpledb/record'
 
 module DataMapper
 
@@ -92,9 +93,16 @@ module DataMapper
             initialize_serial(resource, uuid.to_i)
             item_name = item_name_for_resource(resource)
             sdb_type = simpledb_type(resource.model)
-            attributes = resource.attributes.merge(:simpledb_type => sdb_type)
-            attributes = adjust_to_sdb_attributes(attributes)
-            attributes.reject!{|name, value| value.nil?}
+            # TODO move this to Record!!!
+            # attributes = resource.attributes.merge(:simpledb_type => sdb_type)
+            attributes = resource.attributes(:property)
+            record = SimpleDB::Record.new(
+              attributes, 
+              :source => :resource, 
+              :type => resource.class)
+            attributes = record.writable_attributes
+            # TODO moce this to record!!!
+            # attributes.reject!{|name, value| value.nil?}
             sdb.put_attributes(domain, item_name, attributes)
             created += 1
           end
@@ -205,54 +213,6 @@ module DataMapper
       end
 
     private
-
-      # hack for converting and storing strings longer than 1024 one thing to
-      # note if you use string longer than 1019 chars you will loose the ability
-      # to do full text matching on queries as the string can be broken at any
-      # place during chunking
-      def adjust_to_sdb_attributes(attrs)
-        attrs.each_pair do |key, value|
-          if value.kind_of?(String)
-            # Strings need to be inside arrays in order to prevent RightAws from
-            # inadvertantly splitting them on newlines when it calls
-            # Array(value).
-            attrs[key] = [value]
-          end
-          if value.is_a?(String) && value.length > 1019
-            chunked = string_to_chunks(value)
-            attrs[key] = chunked
-          end
-        end
-        # Stringify keys
-        map_hash_to_hash(attrs) {|k, v| [k.to_s, v]}
-      end
-      
-      def string_to_chunks(value)
-        chunks = value.to_s.scan(%r/.{1,1019}/) # 1024 - '1024:'.size
-        i = -1
-        fmt = '%04d:'
-        chunks.map!{|chunk| [(fmt % (i += 1)), chunk].join}
-        raise ArgumentError, 'that is just too big yo!' if chunks.size >= 256
-        chunks
-      end
-      
-      def chunks_to_string(value)
-        begin
-          chunks =
-            Array(value).flatten.map do |chunk|
-            index, text = chunk.split(%r/:/, 2)
-            [Float(index).to_i, text]
-          end
-          chunks.replace chunks.sort_by{|index, text| index}
-          string_result = chunks.map!{|index, text| text}.join
-          string_result
-        rescue ArgumentError, TypeError
-          #return original value, they could have put strings in the system not using the adapter or previous versions
-          #that are larger than chunk size, but less than 1024
-          value
-        end
-      end
-
       # Returns the domain for the model
       def domain
         @sdb_options[:domain]
@@ -407,17 +367,6 @@ module DataMapper
 
       def format_log_entry(query, ms = 0)
         'SDB (%.1fs)  %s' % [ms, query.squeeze(' ')]
-      end
-
-      def prepare_attributes(attributes)
-        attributes = attributes.to_a.map {|a| [a.first.name.to_s, a.last]}.to_hash
-        attributes = adjust_to_sdb_attributes(attributes)
-        updates, deletes = attributes.partition{|name,value|
-          !value.nil? && !(value.respond_to?(:to_ary) && value.to_ary.empty?)
-        }
-        attrs_to_update = Hash[updates]
-        attrs_to_delete = Hash[deletes].keys
-        [attrs_to_update, attrs_to_delete]
       end
 
       def update_consistency_token

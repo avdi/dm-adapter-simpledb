@@ -1,15 +1,15 @@
 module SimpleDB
   module Utils
-    def map_hash_to_hash(original)
-      Hash[
-        *original.inject([]){|a, (key,value)|
-          catch(:skip) do
-            new_key, new_value = yield(key,value)
-            a << new_key << new_value
-          end
-          a
-        }
-      ]
+    def transform_hash(original, options={}, &block)
+      original.inject({}){|result, (key,value)|
+        value = if (options[:deep] && Hash === value) 
+                  transform_hash(value, options, &block)
+                else 
+                  value
+                end
+        block.call(result,key,value)
+        result
+      }
     end
   end
 end

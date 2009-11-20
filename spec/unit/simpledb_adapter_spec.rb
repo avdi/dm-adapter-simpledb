@@ -10,25 +10,6 @@ describe DataMapper::Adapters::SimpleDBAdapter do
     property :stock, Integer
   end
 
-  before :each do
-    @sdb = stub("RightAWS::SdbInterface").as_null_object
-    @log = stub("Log").as_null_object
-
-    # Using Abstract adapter as a null DB
-    DataMapper.setup(:default, 
-      :adapter       => 'simpledb',
-      :access_key    => "ACCESS_KEY",
-      :secret_key    => "SECRET_KEY",
-      :domain        => "DOMAIN",
-      :logger        => @log,
-      :sdb_interface => @sdb
-      )
-  end
-
-  after :each do
-    DataMapper::Repository.adapters.delete(:default)
-  end
-  
   describe "given a record" do
     before :each do
       @record = Product.new(:name => "War and Peace", :stock => 3)
