@@ -1,10 +1,13 @@
-require 'rubygems'
+gem 'dm-core', '~> 0.10.0'
+
 require 'dm-core'
 require 'digest/sha1'
 require 'dm-aggregates'
 require 'right_aws'
 require 'uuidtools'
-require File.expand_path('simpledb_adapter/sdb_array', File.dirname(__FILE__))
+
+require 'simpledb_adapter/sdb_array'
+require 'simpledb/utils'
 
 module DataMapper
 
@@ -53,6 +56,7 @@ module DataMapper
 
   module Adapters
     class SimpleDBAdapter < AbstractAdapter
+      include SimpleDB::Utils
 
       attr_reader :sdb_options
 
@@ -77,6 +81,7 @@ module DataMapper
         }
         @consistency_policy = 
           normalised_options.fetch(:wait_for_consistency) { false }
+        @sdb = options.fetch(:sdb_interface) { nil }
       end
 
       def create(resources)
@@ -218,7 +223,8 @@ module DataMapper
             attrs[key] = chunked
           end
         end
-        attrs
+        # Stringify keys
+        map_hash_to_hash(attrs) {|k, v| [k.to_s, v]}
       end
       
       def string_to_chunks(value)
@@ -457,6 +463,7 @@ module DataMapper
       end
 
     end # class SimpleDBAdapter
+
     
     # Required naming scheme.
     SimpledbAdapter = SimpleDBAdapter
