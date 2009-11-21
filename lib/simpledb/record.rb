@@ -22,10 +22,8 @@ module SimpleDB
       end.new(hash)
     end
 
-    def self.from_resource_hash(hash, resource_type)
-      versions.fetch(CURRENT_VERSION) do
-        raise "Unknown data version for: #{hash.inspect}"
-      end.new(hash, :source => :resource, :type => resource_type)
+    def self.from_resource(resource)
+      versions.fetch(CURRENT_VERSION).new(resource)
     end
 
     def self.register(klass, version)
@@ -59,17 +57,23 @@ module SimpleDB
 
     attr_reader :simpledb_attributes
     attr_reader :deletable_attributes
+    attr_reader :item_name
     alias_method :writable_attributes, :simpledb_attributes
 
-    def initialize(hash, options={})
-      if options[:source] == :resource
-        attrs_to_update, attrs_to_delete = prepare_attributes(hash)
+    def initialize(hash_or_resource)
+      case hash_or_resource
+      when DataMapper::Resource then
+        attrs_to_update, attrs_to_delete = extract_attributes(hash_or_resource)
         @simpledb_attributes  = attrs_to_update
         @deletable_attributes = attrs_to_delete
-      else
+        @item_name = item_name_for_resource(hash_or_resource)
+      when Hash
+        hash = hash_or_resource
         @item_name = hash.keys.first
         @simpledb_attributes  = hash.values.first
         @deletable_attributes = []
+      else
+        raise "Don't know how to initialize from #{hash_or_resource.inspect}"
       end
     end
 
@@ -115,13 +119,15 @@ module SimpleDB
       }
     end
 
-    def prepare_attributes(attributes)
+    def extract_attributes(resource)
+      attributes = resource.attributes(:property)
       attributes = attributes.to_a.map {|a| [a.first.name.to_s, a.last]}.to_hash
       attributes = adjust_to_sdb_attributes(attributes)
       updates, deletes = attributes.partition{|name,value|
         !value.nil? && !(value.respond_to?(:to_ary) && value.to_ary.empty?)
       }
       attrs_to_update = Hash[updates]
+      attrs_to_update.merge!('simpledb_type' => simpledb_type(resource.model))
       attrs_to_delete = Hash[deletes].keys
       [attrs_to_update, attrs_to_delete]
     end
@@ -137,7 +143,7 @@ module SimpleDB
         elsif primitive_value_of(value.class) <= Array
           result[key] = value
         elsif value.nil?
-          nil
+          result[key] = nil
         else
           result[key] = [value.to_s]
         end
@@ -153,6 +159,35 @@ module SimpleDB
         type
       end
     end
+
+    # Returns a string so we know what type of
+    def simpledb_type(model)
+      model.storage_name(repository_name(model))
+    end
+
+    # Creates an item name for a resource
+    def item_name_for_resource(resource)
+      sdb_type = simpledb_type(resource.model)
+      
+      item_name = "#{sdb_type}+"
+      keys = keys_for_model(resource.model)
+      item_name += keys.map do |property|
+        property.get(resource)
+      end.join('-')
+      
+      Digest::SHA1.hexdigest(item_name)
+    end
+    
+    # Returns the keys for model sorted in alphabetical order
+    def keys_for_model(model)
+      model.key(repository_name(model)).sort {|a,b| a.name.to_s <=> b.name.to_s }
+    end
+
+    def repository_name(model)
+      # TODO this should probably take into account the adapter
+      model.repository.name
+    end
+      
   end
 
   class RecordV0 < Record

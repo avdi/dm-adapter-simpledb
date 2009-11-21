@@ -327,24 +327,6 @@ module DataMapper
         Digest::SHA1.hexdigest(item_name)
       end
       
-      # Creates an item name for a resource
-      def item_name_for_resource(resource)
-        sdb_type = simpledb_type(resource.model)
-        
-        item_name = "#{sdb_type}+"
-        keys = keys_for_model(resource.model)
-        item_name += keys.map do |property|
-          property.get(resource)
-        end.join('-')
-        
-        Digest::SHA1.hexdigest(item_name)
-      end
-      
-      # Returns the keys for model sorted in alphabetical order
-      def keys_for_model(model)
-        model.key(self.name).sort {|a,b| a.name.to_s <=> b.name.to_s }
-      end
-      
       def not_eql_query?(query)
         # Curosity check to make sure we are only dealing with a delete
         conditions = query.conditions.map {|c| c.slug }.uniq
@@ -360,11 +342,6 @@ module DataMapper
         @sdb
       end
       
-      # Returns a string so we know what type of
-      def simpledb_type(model)
-        model.storage_name(model.repository.name)
-      end
-
       def format_log_entry(query, ms = 0)
         'SDB (%.1fs)  %s' % [ms, query.squeeze(' ')]
       end

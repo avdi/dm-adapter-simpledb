@@ -178,6 +178,8 @@ describe SimpleDB::Record do
     before :each do
       @resource_class = Class.new do
         include DataMapper::Resource
+        storage_names[:default] = "books"
+
         property :author,       String, :key => true
         property :date,         Date
         property :text,         DataMapper::Types::Text
@@ -194,7 +196,12 @@ describe SimpleDB::Record do
         :tags  => ['latin', 'classic'],
         :isbn  => nil)
 
-      @it = SimpleDB::Record.from_resource_hash(@resource.attributes(:property), @resource_class)
+      @it = SimpleDB::Record.from_resource(@resource)
+    end
+
+    it "should be able to generate an item name" do
+      @it.item_name.should == 
+        Digest::SHA1.hexdigest("books+Cicero")
     end
 
     context "as a SimpleDB hash" do
@@ -228,6 +235,10 @@ describe SimpleDB::Record do
 
       it "should not include nil values in writable attributes" do
         @hash.should_not include("isbn")
+      end
+
+      it "should include resource type in writable attributes" do
+        @hash["simpledb_type"].should == "books"
       end
 
       it "should include nil values in deleteable attributes" do
