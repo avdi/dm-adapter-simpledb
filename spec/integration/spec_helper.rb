@@ -1,8 +1,11 @@
 require 'pathname'
-require Pathname(__FILE__).dirname.parent.expand_path + 'lib/simpledb_adapter'
+ROOT = File.expand_path('../..', File.dirname(__FILE__))
+$LOAD_PATH.unshift(File.join(ROOT,'lib'))
+require 'simpledb_adapter'
 require 'logger'
 require 'fileutils'
 require 'spec'
+require 'spec/autorun'
 
 DOMAIN_FILE_MESSAGE = <<END
 !!! ATTENTION !!!
@@ -20,7 +23,7 @@ END
 Spec::Runner.configure do |config|
   access_key  = ENV['AMAZON_ACCESS_KEY_ID']
   secret_key  = ENV['AMAZON_SECRET_ACCESS_KEY']
-  domain_file = File.expand_path('../THROW_AWAY_SDB_DOMAIN', File.dirname(__FILE__))
+  domain_file = File.join(ROOT, 'THROW_AWAY_SDB_DOMAIN')
   test_domain = if File.exist?(domain_file)
                   File.read(domain_file).strip
                 else
@@ -30,7 +33,7 @@ Spec::Runner.configure do |config|
 
   #For those that don't like to mess up their ENV
   if access_key==nil && secret_key==nil
-    lines = File.readlines(File.join(File.dirname(__FILE__),'..','aws_config'))
+    lines = File.readlines(File.join(ROOT, 'aws_config'))
     access_key = lines[0].strip
     secret_key = lines[1].strip
   end
@@ -41,6 +44,8 @@ Spec::Runner.configure do |config|
     log_file = "log/dm-sdb.log"
     FileUtils.touch(log_file)
     log = Logger.new(log_file)
+    log.level = ::Logger::DEBUG
+    DataMapper.logger.level = :debug
 
     $control_sdb ||= RightAws::SdbInterface.new(
       access_key, secret_key, :domain => test_domain)

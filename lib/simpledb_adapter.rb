@@ -1,14 +1,20 @@
-gem 'dm-core', '~> 0.10.0'
+gem 'dm-migrations', '~> 0.10.0'
+gem 'dm-types',      '~> 0.10.0'
+gem 'dm-aggregates', '~> 0.10.0'
+gem 'dm-core',       '~> 0.10.0'
+
 
 require 'dm-core'
-require 'digest/sha1'
 require 'dm-aggregates'
+require 'digest/sha1'
 require 'right_aws'
 require 'uuidtools'
 
 require 'simpledb/sdb_array'
 require 'simpledb/utils'
 require 'simpledb/record'
+require 'simpledb/table'
+
 
 module DataMapper
 
@@ -91,18 +97,10 @@ module DataMapper
           resources.each do |resource|
             uuid = UUIDTools::UUID.timestamp_create
             initialize_serial(resource, uuid.to_i)
-            item_name = item_name_for_resource(resource)
-            sdb_type = simpledb_type(resource.model)
-            # TODO move this to Record!!!
-            # attributes = resource.attributes.merge(:simpledb_type => sdb_type)
-            attributes = resource.attributes(:property)
-            record = SimpleDB::Record.new(
-              attributes, 
-              :source => :resource, 
-              :type => resource.class)
+
+            record     = SimpleDB::Record.from_resource(resource)
             attributes = record.writable_attributes
-            # TODO moce this to record!!!
-            # attributes.reject!{|name, value| value.nil?}
+            item_name  = record.item_name
             sdb.put_attributes(domain, item_name, attributes)
             created += 1
           end
@@ -116,7 +114,8 @@ module DataMapper
         deleted = 0
         time = Benchmark.realtime do
           collection.each do |resource|
-            item_name = item_name_for_resource(resource)
+            record = SimpleDB::Record.from_resource(resource)
+            item_name = record.item_name
             sdb.delete_attributes(domain, item_name)
             deleted += 1
           end
@@ -128,33 +127,16 @@ module DataMapper
 
       def read(query)
         maybe_wait_for_consistency
-        sdb_type = simpledb_type(query.model)
-        
+        table = SimpleDB::Table.new(query.model)
         conditions, order, unsupported_conditions = 
-          set_conditions_and_sort_order(query, sdb_type)
+          set_conditions_and_sort_order(query, table.simpledb_type)
         results = get_results(query, conditions, order)
-        proto_resources = results.map do |result|
-          name, attributes = *result.to_a.first
-          proto_resource = query.fields.inject({}) do |proto_resource, property|
-            value = attributes[property.field.to_s]
-            if value != nil
-              if value.size > 1
-                if property.type == String
-                  value = chunks_to_string(value)
-                else
-                  value = value.map {|v| property.typecast(v) }
-                end
-              else
-                value = property.typecast(value.first)
-              end
-            else
-              value = property.typecast(nil)
-            end
-            proto_resource[property.name.to_s] = value
-            proto_resource
-          end
-          proto_resource
-        end
+        records = results.map{|result| 
+          SimpleDB::Record.from_simpledb_hash(result)
+        }
+        proto_resources = records.map{|record|
+          record.to_resource_hash(query.fields)
+        }
         query.conditions.operands.reject!{ |op|
           !unsupported_conditions.include?(op)
         }
@@ -165,10 +147,14 @@ module DataMapper
       
       def update(attributes, collection)
         updated = 0
-        attrs_to_update, attrs_to_delete = prepare_attributes(attributes)
         time = Benchmark.realtime do
           collection.each do |resource|
-            item_name = item_name_for_resource(resource)
+            updated_resource = resource.dup
+            updated_resource.attributes = attributes
+            record = SimpleDB::Record.from_resource(updated_resource)
+            attrs_to_update = record.writable_attributes
+            attrs_to_delete = record.deletable_attributes
+            item_name       = record.item_name
             unless attrs_to_update.empty?
               sdb.put_attributes(domain, item_name, attrs_to_update, :replace)
             end
@@ -190,7 +176,8 @@ module DataMapper
       
       def aggregate(query)
         raise ArgumentError.new("Only count is supported") unless (query.fields.first.operator == :count)
-        sdb_type = simpledb_type(query.model)
+        table    = SimpleDB::Table.new(query.model)
+        sdb_type = table.simpledb_type
         conditions, order, unsupported_conditions = set_conditions_and_sort_order(query, sdb_type)
 
         query_call = "SELECT count(*) FROM #{domain} "

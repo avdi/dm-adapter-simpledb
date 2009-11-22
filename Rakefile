@@ -4,33 +4,44 @@ require 'pathname'
 load 'tasks/devver.rake'
 
 ROOT = Pathname(__FILE__).dirname.expand_path
-require ROOT + 'lib/simpledb_adapter'
 
-task :default => [ :spec ]
+task :default => [ 'spec:unit' ]
 
-desc 'Run specifications'
-Spec::Rake::SpecTask.new(:spec) do |t|
-  if File.exists?('spec/spec.opts')
-    t.spec_opts << '--options' << 'spec/spec.opts'
+namespace :spec do
+  desc 'Run unit-level specifications'
+  Spec::Rake::SpecTask.new(:unit) do |t|
+    if File.exists?('spec/spec.opts')
+      t.spec_opts << '--options' << 'spec/spec.opts'
+    end
+    t.spec_files = Pathname.glob((ROOT + 'spec/unit/**/*_spec.rb').to_s)
+    
+    begin
+      t.rcov = ENV.has_key?('NO_RCOV') ? ENV['NO_RCOV'] != 'true' : true
+      t.rcov_opts << '--exclude' << 'spec'
+      t.rcov_opts << '--text-summary'
+      t.rcov_opts << '--sort' << 'coverage' << '--sort-reverse'
+    rescue Exception
+      # rcov not installed
+    end
   end
-  t.spec_files = Pathname.glob((ROOT + 'spec/**/*_spec.rb').to_s)
- 
-  begin
-    t.rcov = ENV.has_key?('NO_RCOV') ? ENV['NO_RCOV'] != 'true' : true
-    t.rcov_opts << '--exclude' << 'spec'
-    t.rcov_opts << '--text-summary'
-    t.rcov_opts << '--sort' << 'coverage' << '--sort-reverse'
-  rescue Exception
-    # rcov not installed
-  end
-end
 
-desc 'Run specifications without Rcov'
-Spec::Rake::SpecTask.new(:spec_no_rcov) do |t|
-  if File.exists?('spec/spec.opts')
-    t.spec_opts << '--options' << 'spec/spec.opts'
+  desc 'Run integration-level specifications'
+  Spec::Rake::SpecTask.new(:integration) do |t|
+    if File.exists?('spec/spec.opts')
+      t.spec_opts << '--options' << 'spec/spec.opts'
+    end
+    t.spec_files = Pathname.glob((ROOT + 'spec/integration/**/*_spec.rb').to_s)
+    
+    begin
+      t.rcov = ENV.has_key?('NO_RCOV') ? ENV['NO_RCOV'] != 'true' : true
+      t.rcov_opts << '--exclude' << 'spec'
+      t.rcov_opts << '--text-summary'
+      t.rcov_opts << '--sort' << 'coverage' << '--sort-reverse'
+    rescue Exception
+      # rcov not installed
+    end
   end
-  t.spec_files = Pathname.glob((ROOT + 'spec/**/*_spec.rb').to_s)
+
 end
 
 begin
@@ -68,6 +79,8 @@ END
     ]
     gem.add_dependency('dm-core',               '~> 0.10.0')
     gem.add_dependency('dm-aggregates',         '~> 0.10.0')
+    gem.add_dependency('dm-migrations',         '~> 0.10.0')
+    gem.add_dependency('dm-types',              '~> 0.10.0')
     gem.add_dependency('uuidtools',             '~> 2.0')
     gem.add_dependency('right_aws',             '~> 1.10')
   end

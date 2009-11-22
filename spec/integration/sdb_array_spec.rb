@@ -1,14 +1,13 @@
 require 'pathname'
 require Pathname(__FILE__).dirname.expand_path + 'spec_helper'
-require Pathname(__FILE__).dirname.expand_path + '../lib/simpledb_adapter/sdb_array'
-require 'spec/autorun'
+require 'simpledb/sdb_array'
 
 describe 'with multiple records saved' do
   
   class Hobbyist
     include DataMapper::Resource
     property :name,       String, :key => true
-    property :hobbies,     SdbArray
+    property :hobbies,    SdbArray
   end
   
   before(:each) do
@@ -35,7 +34,7 @@ describe 'with multiple records saved' do
     person.save
     @adapter.wait_for_consistency
     lego_person = Hobbyist.first(:name => 'Jeremy Boles')
-    lego_person.hobbies.should == "lego"
+    lego_person.hobbies.should == ["lego"]
   end
   
   it 'should allow deletion of array' do
@@ -44,7 +43,7 @@ describe 'with multiple records saved' do
     person.save
     @adapter.wait_for_consistency
     lego_person = Hobbyist.first(:name => 'Jeremy Boles')
-    lego_person.hobbies.should == nil
+    lego_person.hobbies.should == []
   end
   
   it 'should find all records with diving hobby' do

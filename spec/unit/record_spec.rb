@@ -33,6 +33,14 @@ describe SimpleDB::Record do
       @it["bar", Array].should == []
     end
 
+    it "should be able to coerce based on a property" do
+      @it["foo", @thing_class.properties[:foo]].should == 123
+    end
+
+    it "should be able to coerce based on a simple type" do
+      @it["foo", Integer].should == "123"
+    end
+
     context "converted to a resource hash" do
       before :each do
         @hash = @it.to_resource_hash(@thing_class.properties)
@@ -73,7 +81,7 @@ describe SimpleDB::Record do
 
     it "should be able to convert the record to a DM-friendly hash" do
       @it.to_resource_hash(@resource_class.properties).should == {
-        :foo           => "123",
+        :foo           => 123,
       }
     end
 
@@ -119,7 +127,7 @@ describe SimpleDB::Record do
 
     it "should be able to convert the record to a DM-friendly hash" do
       @it.to_resource_hash(@resource_class.properties).should == {
-        :bar => "456"
+        :bar => 456
       }
     end
 
@@ -238,7 +246,7 @@ describe SimpleDB::Record do
       end
 
       it "should include resource type in writable attributes" do
-        @hash["simpledb_type"].should == "books"
+        @hash["simpledb_type"].should == ["books"]
       end
 
       it "should include nil values in deleteable attributes" do

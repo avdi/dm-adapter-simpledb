@@ -1,6 +1,7 @@
 require 'dm-core'
 require 'simpledb/utils'
 require 'simpledb/chunked_string'
+require 'simpledb/table'
 
 # TODO
 # * V1.1: Store type in __dm_metadata
@@ -82,9 +83,10 @@ module SimpleDB
     # @param [PropertySet] fields
     #   The fields to extract
     def to_resource_hash(fields)
-      transform_hash(fields) {|hash, property|
-        hash[property.name] = self[property.field, property.type]
+      result = transform_hash(fields) {|hash, property|
+        hash[property.name.to_s] = self[property.field, property]
       }
+      result
     end
 
     def storage_name
@@ -96,10 +98,31 @@ module SimpleDB
       coerce_to(values, type)
     end
 
-    def coerce_to(values, type)
+    def coerce_to(values, type_or_property)
+      case type_or_property
+      when DataMapper::Property
+        coerce_to_property(values, type_or_property)
+      when Class
+        coerce_to_type(values, type_or_property)
+      else raise "Should never get here"
+      end
+    end
+
+    def coerce_to_property(value, property)
+      property.typecast(coerce_to_type(value, property.type))
+    end
+
+    def coerce_to_type(values, type)
       case 
       when type <= String
-        values.empty? ? nil : ChunkedString.new(values)
+        case values.size
+        when 0
+          nil
+        when 1
+          values.first
+        else
+          ChunkedString.new(values)
+        end
       when type <= Array, type <= DataMapper::Types::SdbArray
         values
       else
@@ -124,11 +147,12 @@ module SimpleDB
       attributes = attributes.to_a.map {|a| [a.first.name.to_s, a.last]}.to_hash
       attributes = adjust_to_sdb_attributes(attributes)
       updates, deletes = attributes.partition{|name,value|
-        !value.nil? && !(value.respond_to?(:to_ary) && value.to_ary.empty?)
+        !Array(value).empty?
       }
-      attrs_to_update = Hash[updates]
-      attrs_to_update.merge!('simpledb_type' => simpledb_type(resource.model))
-      attrs_to_delete = Hash[deletes].keys
+      attrs_to_update = updates.inject({}){|h, (k,v)| h[k] = v; h}
+      attrs_to_update.merge!(
+        'simpledb_type' => [Table.new(resource.model).simpledb_type])
+      attrs_to_delete = deletes.inject({}){|h, (k,v)| h[k] = v; h}.keys
       [attrs_to_update, attrs_to_delete]
     end
 
@@ -140,6 +164,8 @@ module SimpleDB
       attrs = transform_hash(attrs) do |result, key, value|
         if primitive_value_of(value.class) <= String
           result[key] = ChunkedString.new(value).to_a
+        elsif value.class == Object # This is for SdbArray
+          result[key] = value.to_ary
         elsif primitive_value_of(value.class) <= Array
           result[key] = value
         elsif value.nil?
@@ -148,7 +174,7 @@ module SimpleDB
           result[key] = [value.to_s]
         end
       end
-      # Stringify keys and values
+      # Stringify keys
       transform_hash(attrs) {|h, k, v| h[k.to_s] = v}
     end
 
@@ -160,17 +186,13 @@ module SimpleDB
       end
     end
 
-    # Returns a string so we know what type of
-    def simpledb_type(model)
-      model.storage_name(repository_name(model))
-    end
-
     # Creates an item name for a resource
     def item_name_for_resource(resource)
-      sdb_type = simpledb_type(resource.model)
+      table = Table.new(resource.model)
+      sdb_type = table.simpledb_type
       
       item_name = "#{sdb_type}+"
-      keys = keys_for_model(resource.model)
+      keys = table.keys_for_model
       item_name += keys.map do |property|
         property.get(resource)
       end.join('-')
@@ -178,22 +200,12 @@ module SimpleDB
       Digest::SHA1.hexdigest(item_name)
     end
     
-    # Returns the keys for model sorted in alphabetical order
-    def keys_for_model(model)
-      model.key(repository_name(model)).sort {|a,b| a.name.to_s <=> b.name.to_s }
-    end
-
-    def repository_name(model)
-      # TODO this should probably take into account the adapter
-      model.repository.name
-    end
-      
   end
 
   class RecordV0 < Record
     version "00.00.00"
 
-    def coerce_to(values, type)
+    def coerce_to_type(values, type)
       result = super(values, type)
 
       if result && type <= String

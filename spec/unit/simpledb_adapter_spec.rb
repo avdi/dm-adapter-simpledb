@@ -21,7 +21,7 @@ describe DataMapper::Adapters::SimpleDBAdapter do
         anything,
         hash_including(
           'simpledb_type' => ["products"], 
-          'stock'         => 3, 
+          'stock'         => ["3"], 
           'name'          => ["War and Peace"]))
       @record.save
     end
@@ -44,7 +44,7 @@ describe DataMapper::Adapters::SimpleDBAdapter do
       @sdb.should_receive(:put_attributes).with(
         anything,
         anything,
-        hash_including('stock' => 5),
+        hash_including('stock' => ["5"]),
         :replace)
       @record.save
     end

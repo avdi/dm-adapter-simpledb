@@ -38,8 +38,9 @@ module SimpleDB
         string_result = chunks.map!{|index, text| text}.join
         string_result
       rescue ArgumentError, TypeError
-        #return original value, they could have put strings in the system not using the adapter or previous versions
-        #that are larger than chunk size, but less than 1024
+        #return original value, they could have put strings in the system not
+        #using the adapter or previous versions that are larger than chunk size,
+        #but less than 1024
         value
       end
     end
